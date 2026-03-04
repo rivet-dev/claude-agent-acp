@@ -106,6 +106,8 @@ type AccumulatedUsage = {
   cachedWriteTokens: number;
 };
 
+type EffortLevel = "low" | "medium" | "high" | "max";
+
 type Session = {
   query: Query;
   input: Pushable<SDKUserMessage>;
@@ -904,6 +906,11 @@ export class ClaudeAcpAgent implements Agent {
       });
     } else if (params.configId === "model") {
       await this.sessions[params.sessionId].query.setModel(params.value);
+    } else if (params.configId === "thought_level") {
+      // Use applyFlagSettings to update the effort level in the Claude Code subprocess.
+      // This sets the effortLevel in the flag settings layer, which takes effect on
+      // subsequent API calls within the same session.
+      await (session.query as any).applyFlagSettings({ effortLevel: params.value });
     }
 
     session.configOptions = session.configOptions.map((o) =>
@@ -1371,7 +1378,13 @@ export class ClaudeAcpAgent implements Agent {
       availableModes,
     };
 
-    const configOptions = buildConfigOptions(modes, models);
+    // Derive available effort levels from models
+    const effortLevels = getAvailableEffortLevels(
+      initializationResult.models,
+      userProvidedOptions?.effort,
+    );
+
+    const configOptions = buildConfigOptions(modes, models, effortLevels);
 
     this.sessions[sessionId] = {
       query: q,
@@ -1416,8 +1429,9 @@ function createEnvForGateway(gatewayMeta?: GatewayAuthMeta) {
 function buildConfigOptions(
   modes: SessionModeState,
   models: SessionModelState,
+  effortLevels?: { available: EffortLevel[]; current: EffortLevel },
 ): SessionConfigOption[] {
-  return [
+  const options: SessionConfigOption[] = [
     {
       id: "mode",
       name: "Mode",
@@ -1445,6 +1459,29 @@ function buildConfigOptions(
       })),
     },
   ];
+
+  if (effortLevels && effortLevels.available.length > 0) {
+    const effortNames: Record<EffortLevel, string> = {
+      low: "Low",
+      medium: "Medium",
+      high: "High",
+      max: "Max",
+    };
+    options.push({
+      id: "thought_level",
+      name: "Thought Level",
+      description: "Controls how much effort Claude puts into its response",
+      category: "thought_level",
+      type: "select",
+      currentValue: effortLevels.current,
+      options: effortLevels.available.map((level) => ({
+        value: level,
+        name: effortNames[level] ?? level,
+      })),
+    });
+  }
+
+  return options;
 }
 
 // Claude Code CLI persists display strings like "opus[1m]" in settings,
@@ -1546,6 +1583,34 @@ async function getAvailableModels(
     })),
     currentModelId: currentModel.value,
   };
+}
+
+function getAvailableEffortLevels(
+  models: ModelInfo[],
+  initialEffort?: EffortLevel,
+): { available: EffortLevel[]; current: EffortLevel } | undefined {
+  // Collect all unique effort levels from models that support effort
+  const allLevels = new Set<EffortLevel>();
+  for (const model of models) {
+    if (model.supportsEffort && model.supportedEffortLevels) {
+      for (const level of model.supportedEffortLevels) {
+        allLevels.add(level);
+      }
+    }
+  }
+
+  if (allLevels.size === 0) {
+    return undefined;
+  }
+
+  // Sort in canonical order
+  const order: EffortLevel[] = ["low", "medium", "high", "max"];
+  const available = order.filter((l) => allLevels.has(l));
+
+  // Default to "high" if no initial effort specified
+  const current = initialEffort && available.includes(initialEffort) ? initialEffort : "high";
+
+  return { available, current };
 }
 
 function getAvailableSlashCommands(commands: SlashCommand[]): AvailableCommand[] {

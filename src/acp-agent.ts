@@ -108,6 +108,21 @@ type AccumulatedUsage = {
 
 type EffortLevel = "low" | "medium" | "high" | "max";
 
+type QueryWithApplyFlagSettings = Query & {
+  applyFlagSettings: (settings: { effortLevel: EffortLevel }) => Promise<void>;
+};
+
+function isEffortLevel(value: string): value is EffortLevel {
+  return value === "low" || value === "medium" || value === "high" || value === "max";
+}
+
+function hasApplyFlagSettings(query: Query): query is QueryWithApplyFlagSettings {
+  return (
+    "applyFlagSettings" in query &&
+    typeof (query as Partial<QueryWithApplyFlagSettings>).applyFlagSettings === "function"
+  );
+}
+
 type Session = {
   query: Query;
   input: Pushable<SDKUserMessage>;
@@ -907,10 +922,16 @@ export class ClaudeAcpAgent implements Agent {
     } else if (params.configId === "model") {
       await this.sessions[params.sessionId].query.setModel(params.value);
     } else if (params.configId === "thought_level") {
+      if (!isEffortLevel(params.value)) {
+        throw new Error(`Invalid thought level: ${params.value}`);
+      }
+      if (!hasApplyFlagSettings(session.query)) {
+        throw new Error("Thought level is not supported by this Claude SDK version");
+      }
       // Use applyFlagSettings to update the effort level in the Claude Code subprocess.
       // This sets the effortLevel in the flag settings layer, which takes effect on
       // subsequent API calls within the same session.
-      await (session.query as any).applyFlagSettings({ effortLevel: params.value });
+      await session.query.applyFlagSettings({ effortLevel: params.value });
     }
 
     session.configOptions = session.configOptions.map((o) =>
@@ -1461,12 +1482,6 @@ function buildConfigOptions(
   ];
 
   if (effortLevels && effortLevels.available.length > 0) {
-    const effortNames: Record<EffortLevel, string> = {
-      low: "Low",
-      medium: "Medium",
-      high: "High",
-      max: "Max",
-    };
     options.push({
       id: "thought_level",
       name: "Thought Level",
@@ -1476,7 +1491,7 @@ function buildConfigOptions(
       currentValue: effortLevels.current,
       options: effortLevels.available.map((level) => ({
         value: level,
-        name: effortNames[level] ?? level,
+        name: level.charAt(0).toUpperCase() + level.slice(1),
       })),
     });
   }
@@ -1589,26 +1604,32 @@ function getAvailableEffortLevels(
   models: ModelInfo[],
   initialEffort?: EffortLevel,
 ): { available: EffortLevel[]; current: EffortLevel } | undefined {
-  // Collect all unique effort levels from models that support effort
-  const allLevels = new Set<EffortLevel>();
+  // Collect unique effort levels in adapter-reported order.
+  const seen = new Set<EffortLevel>();
+  const available: EffortLevel[] = [];
   for (const model of models) {
     if (model.supportsEffort && model.supportedEffortLevels) {
       for (const level of model.supportedEffortLevels) {
-        allLevels.add(level);
+        if (!seen.has(level)) {
+          seen.add(level);
+          available.push(level);
+        }
       }
     }
   }
 
-  if (allLevels.size === 0) {
+  if (available.length === 0) {
     return undefined;
   }
 
-  // Sort in canonical order
-  const order: EffortLevel[] = ["low", "medium", "high", "max"];
-  const available = order.filter((l) => allLevels.has(l));
-
-  // Default to "high" if no initial effort specified
-  const current = initialEffort && available.includes(initialEffort) ? initialEffort : "high";
+  // If no valid initial effort is provided, prefer "high" when available,
+  // otherwise fall back to the first available level.
+  const current =
+    initialEffort && available.includes(initialEffort)
+      ? initialEffort
+      : available.includes("high")
+        ? "high"
+        : available[0];
 
   return { available, current };
 }

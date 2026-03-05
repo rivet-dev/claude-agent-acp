@@ -106,15 +106,11 @@ type AccumulatedUsage = {
   cachedWriteTokens: number;
 };
 
-type EffortLevel = "low" | "medium" | "high" | "max";
+type EffortLevel = NonNullable<Options["effort"]>;
 
 type QueryWithApplyFlagSettings = Query & {
   applyFlagSettings: (settings: { effortLevel: EffortLevel }) => Promise<void>;
 };
-
-function isEffortLevel(value: string): value is EffortLevel {
-  return value === "low" || value === "medium" || value === "high" || value === "max";
-}
 
 function hasApplyFlagSettings(query: Query): query is QueryWithApplyFlagSettings {
   return (
@@ -922,16 +918,13 @@ export class ClaudeAcpAgent implements Agent {
     } else if (params.configId === "model") {
       await this.sessions[params.sessionId].query.setModel(params.value);
     } else if (params.configId === "thought_level") {
-      if (!isEffortLevel(params.value)) {
-        throw new Error(`Invalid thought level: ${params.value}`);
-      }
       if (!hasApplyFlagSettings(session.query)) {
         throw new Error("Thought level is not supported by this Claude SDK version");
       }
       // Use applyFlagSettings to update the effort level in the Claude Code subprocess.
       // This sets the effortLevel in the flag settings layer, which takes effect on
       // subsequent API calls within the same session.
-      await session.query.applyFlagSettings({ effortLevel: params.value });
+      await session.query.applyFlagSettings({ effortLevel: params.value as EffortLevel });
     }
 
     session.configOptions = session.configOptions.map((o) =>

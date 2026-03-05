@@ -112,11 +112,35 @@ type QueryWithApplyFlagSettings = Query & {
   applyFlagSettings: (settings: { effortLevel: EffortLevel }) => Promise<void>;
 };
 
+type QueryWithGetSettings = Query & {
+  request: (request: { subtype: "get_settings" }) => Promise<{
+    response?: { effective?: { effortLevel?: unknown } };
+  }>;
+};
+
 function hasApplyFlagSettings(query: Query): query is QueryWithApplyFlagSettings {
   return (
     "applyFlagSettings" in query &&
     typeof (query as Partial<QueryWithApplyFlagSettings>).applyFlagSettings === "function"
   );
+}
+
+function hasGetSettings(query: Query): query is QueryWithGetSettings {
+  return "request" in query && typeof (query as Partial<QueryWithGetSettings>).request === "function";
+}
+
+async function getCurrentEffortLevel(query: Query): Promise<EffortLevel | undefined> {
+  if (!hasGetSettings(query)) {
+    return undefined;
+  }
+
+  try {
+    const response = await query.request({ subtype: "get_settings" });
+    const effortLevel = response?.response?.effective?.effortLevel;
+    return typeof effortLevel === "string" ? (effortLevel as EffortLevel) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 type Session = {
@@ -1392,11 +1416,15 @@ export class ClaudeAcpAgent implements Agent {
       availableModes,
     };
 
-    // Derive available effort levels from models
+    // Derive available effort levels from models and align with the current runtime setting.
+    const currentEffort = userProvidedOptions?.effort ?? (await getCurrentEffortLevel(q));
     const effortLevels = getAvailableEffortLevels(
       initializationResult.models,
-      userProvidedOptions?.effort,
+      currentEffort,
     );
+    if (effortLevels && hasApplyFlagSettings(q)) {
+      await q.applyFlagSettings({ effortLevel: effortLevels.current });
+    }
 
     const configOptions = buildConfigOptions(modes, models, effortLevels);
 

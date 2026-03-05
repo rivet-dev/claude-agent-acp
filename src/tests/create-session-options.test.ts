@@ -4,6 +4,8 @@ import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import type { ClaudeAcpAgent as ClaudeAcpAgentType } from "../acp-agent.js";
 
 let capturedOptions: Options | undefined;
+let mockEffectiveEffortLevel: unknown;
+let appliedFlagSettings: Array<{ effortLevel: string }>;
 vi.mock("@anthropic-ai/claude-agent-sdk", async () => {
   const actual = await vi.importActual<typeof import("@anthropic-ai/claude-agent-sdk")>(
     "@anthropic-ai/claude-agent-sdk",
@@ -15,9 +17,26 @@ vi.mock("@anthropic-ai/claude-agent-sdk", async () => {
       return {
         initializationResult: async () => ({
           models: [
-            { value: "claude-sonnet-4-5", displayName: "Claude Sonnet", description: "Fast" },
+            {
+              value: "claude-sonnet-4-5",
+              displayName: "Claude Sonnet",
+              description: "Fast",
+              supportsEffort: true,
+              supportedEffortLevels: ["low", "medium", "high", "max"],
+            },
           ],
         }),
+        request: async (request: { subtype: string }) => {
+          if (request.subtype === "get_settings") {
+            return {
+              response: { effective: { effortLevel: mockEffectiveEffortLevel } },
+            };
+          }
+          return { response: {} };
+        },
+        applyFlagSettings: async (settings: { effortLevel: string }) => {
+          appliedFlagSettings.push(settings);
+        },
         setModel: async () => {},
         supportedCommands: async () => [],
         [Symbol.asyncIterator]: async function* () {},
@@ -49,6 +68,8 @@ describe("createSession options merging", () => {
 
   beforeEach(async () => {
     capturedOptions = undefined;
+    mockEffectiveEffortLevel = undefined;
+    appliedFlagSettings = [];
 
     vi.resetModules();
     const acpAgent = await import("../acp-agent.js");
@@ -181,5 +202,29 @@ describe("createSession options merging", () => {
     expect(capturedOptions!.mcpServers).toHaveProperty("user-server");
     // ACP-provided MCP server should also be present
     expect(capturedOptions!.mcpServers).toHaveProperty("acp-server");
+  });
+
+  it("uses effective effort level from runtime settings", async () => {
+    mockEffectiveEffortLevel = "max";
+
+    const response = await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+    });
+
+    const thoughtLevelOption = response.configOptions?.find((option) => option.id === "thought_level");
+    expect(thoughtLevelOption?.currentValue).toBe("max");
+    expect(appliedFlagSettings).toContainEqual({ effortLevel: "max" });
+  });
+
+  it("defaults effort level to high when runtime settings do not specify one", async () => {
+    const response = await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+    });
+
+    const thoughtLevelOption = response.configOptions?.find((option) => option.id === "thought_level");
+    expect(thoughtLevelOption?.currentValue).toBe("high");
+    expect(appliedFlagSettings).toContainEqual({ effortLevel: "high" });
   });
 });

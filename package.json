@@ -1,9 +1,9 @@
 {
-  "name": "@rivet-dev/claude-agent-acp",
+  "name": "@zed-industries/claude-agent-acp",
   "publishConfig": {
     "access": "public"
   },
-  "version": "0.20.0-rivet.0",
+  "version": "0.20.0",
   "description": "An ACP-compatible coding agent powered by the Claude Agent SDK (TypeScript)",
   "main": "dist/lib.js",
   "types": "dist/lib.d.ts",
@@ -49,15 +49,15 @@
     "sdk",
     "code"
   ],
-  "homepage": "https://github.com/rivet-dev/claude-agent-acp#readme",
+  "homepage": "https://github.com/zed-industries/claude-agent-acp#readme",
   "bugs": {
-    "url": "https://github.com/rivet-dev/claude-agent-acp/issues"
+    "url": "https://github.com/zed-industries/claude-agent-acp/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rivet-dev/claude-agent-acp.git"
+    "url": "git+https://github.com/zed-industries/claude-agent-acp.git"
   },
-  "author": "Rivet",
+  "author": "Zed Industries",
   "license": "Apache-2.0",
   "dependencies": {
     "@agentclientprotocol/sdk": "0.14.1",
